@@ -238,6 +238,18 @@ html, body, #root {
   letter-spacing: 1px;
 }
 
+.control-btn.download-btn {
+  background: rgba(0, 40, 0, 0.8) !important;
+  border: 1px solid rgba(100, 255, 100, 0.6) !important;
+  color: #66ff66 !important;
+}
+
+.control-btn.download-btn:hover:not(:disabled) {
+  background: rgba(0, 60, 0, 0.9) !important;
+  border-color: #66ff66 !important;
+  box-shadow: 0 0 10px rgba(100, 255, 100, 0.5) !important;
+}
+
 .control-btn:hover:not(:disabled) {
   background: rgba(60, 0, 0, 0.9) !important;
   border-color: #ff6666 !important;
