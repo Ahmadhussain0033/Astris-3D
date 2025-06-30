@@ -603,8 +603,8 @@ function App() {
       id: Date.now() + Math.random()
     };
 
-    // Add local grid to the object
-    createLocalGrid(mesh, 5);
+    // Add local grid to the object - BIGGER GRID
+    createLocalGrid(mesh, 10);
 
     sceneRef.current.add(mesh);
     setObjects(prev => [...prev, { 
