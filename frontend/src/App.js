@@ -716,7 +716,7 @@ function App() {
           <div className="data-grid">
             <div className="data-field">
               <span className="label">SEL:</span>
-              <span className="value">{selectedObject ? selectedObject.userData.shapeType.toUpperCase() : 'NONE'}</span>
+              <span className="value">{selectedObject?.userData?.shapeType?.toUpperCase() || 'NONE'}</span>
             </div>
             <div className="data-field">
               <span className="label">POS:</span>
