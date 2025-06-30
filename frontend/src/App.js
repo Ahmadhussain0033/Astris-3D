@@ -624,6 +624,14 @@ function App() {
     }
   };
 
+  // Reset camera position
+  const resetCamera = () => {
+    if (cameraRef.current) {
+      cameraRef.current.position.set(0, 5, 10);
+      cameraRef.current.lookAt(0, 0, 0);
+    }
+  };
+
   // Download sculpture as JSON
   const downloadSculpture = () => {
     if (!sceneRef.current) return;
