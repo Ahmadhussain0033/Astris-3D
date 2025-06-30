@@ -303,9 +303,8 @@ function App() {
     const axesHelper = new THREE.AxesHelper(8);
     scene.add(axesHelper);
     
-    // Add coordinate labels
-    const loader = new THREE.FontLoader();
-    // We'll skip font loading for now to avoid complexity
+    // Add coordinate labels would go here
+    // Skipping font loading to avoid complexity
 
     // Mount renderer
     mountRef.current.appendChild(renderer.domElement);
