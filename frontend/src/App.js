@@ -562,7 +562,11 @@ function App() {
 
   // Add 3D shape - Cyan colored with local grid
   const addShape = (shapeType) => {
-    if (!sceneRef.current) return;
+    console.log('Adding shape:', shapeType);
+    if (!sceneRef.current) {
+      console.error('Scene not initialized');
+      return;
+    }
 
     let geometry;
     switch (shapeType) {
@@ -590,11 +594,13 @@ function App() {
 
     const material = MATERIALS.default.clone();
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(
-      Math.random() * 4 - 2,
-      Math.random() * 2 + 1,
-      Math.random() * 4 - 2
-    );
+    
+    // Position in visible area
+    const x = (Math.random() - 0.5) * 6;
+    const y = Math.random() * 3 + 0.5;
+    const z = (Math.random() - 0.5) * 6;
+    
+    mesh.position.set(x, y, z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { 
@@ -603,15 +609,23 @@ function App() {
       id: Date.now() + Math.random()
     };
 
+    console.log('Mesh created at position:', mesh.position);
+
     // Add local grid to the object - BIGGER GRID
     createLocalGrid(mesh, 10);
 
     sceneRef.current.add(mesh);
-    setObjects(prev => [...prev, { 
+    
+    const newObjects = [...objects, { 
       id: mesh.userData.id, 
       type: shapeType, 
-      position: mesh.position 
-    }]);
+      position: { x, y, z }
+    }];
+    
+    setObjects(newObjects);
+    
+    console.log('Shape added to scene. Total objects:', newObjects.length);
+    console.log('Scene children:', sceneRef.current.children.length);
   };
 
   // Delete selected object
