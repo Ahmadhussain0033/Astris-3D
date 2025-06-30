@@ -624,12 +624,59 @@ function App() {
     }
   };
 
-  // Reset camera position
-  const resetCamera = () => {
-    if (cameraRef.current) {
-      cameraRef.current.position.set(0, 5, 10);
-      cameraRef.current.lookAt(0, 0, 0);
-    }
+  // Download sculpture as JSON
+  const downloadSculpture = () => {
+    if (!sceneRef.current) return;
+    
+    const meshes = sceneRef.current.children.filter(child => 
+      child.isMesh && child.userData.isUserObject
+    );
+    
+    const sculptureData = {
+      name: `Astris_Sculpture_${new Date().toISOString().slice(0, 10)}`,
+      createdAt: new Date().toISOString(),
+      objects: meshes.map(mesh => ({
+        id: mesh.userData.id,
+        type: mesh.userData.shapeType,
+        position: {
+          x: mesh.position.x,
+          y: mesh.position.y,
+          z: mesh.position.z
+        },
+        rotation: {
+          x: mesh.rotation.x,
+          y: mesh.rotation.y,
+          z: mesh.rotation.z
+        },
+        scale: {
+          x: mesh.scale.x,
+          y: mesh.scale.y,
+          z: mesh.scale.z
+        }
+      })),
+      camera: {
+        position: {
+          x: cameraRef.current.position.x,
+          y: cameraRef.current.position.y,
+          z: cameraRef.current.position.z
+        }
+      }
+    };
+    
+    const dataStr = JSON.stringify(sculptureData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = sculptureData.name + '.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    URL.revokeObjectURL(url);
+    
+    console.log('Sculpture downloaded:', sculptureData.name);
   };
 
   // Initialize everything
