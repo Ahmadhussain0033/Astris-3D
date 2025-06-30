@@ -60,8 +60,8 @@ function App() {
     lastGestureTime: 0
   });
 
-  // Create proper 3D grid around an object (like the image)
-  const createLocalGrid = (object, gridSize = 5) => {
+  // Create proper 3D grid around an object (like the image) - BIGGER
+  const createLocalGrid = (object, gridSize = 10) => {
     const gridGroup = new THREE.Group();
     
     // Create grid material
