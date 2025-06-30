@@ -116,7 +116,7 @@ function App() {
     }
     const yzGeometry = new THREE.BufferGeometry();
     yzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(yzPoints, 3));
-    const yzGrid = new THREE.LineSegments(yzGeometry, yzMaterial);
+    const yzGrid = new THREE.LineSegments(yzGeometry, gridMaterial);
     gridGroup.add(yzGrid);
     
     // Add the grid as a child of the object so it moves with it
