@@ -14,7 +14,7 @@ const SHAPE_TYPES = {
   PLANE: 'plane'
 };
 
-// Colors for different materials
+// Colors for different materials - Cyan theme
 const MATERIALS = {
   default: new THREE.MeshPhongMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 }),
   selected: new THREE.MeshPhongMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 }),
@@ -27,7 +27,9 @@ function App() {
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const gestureDetectionRef = useRef(null);
+  const localGridsRef = useRef([]);
   
   const [selectedObject, setSelectedObject] = useState(null);
   const [cameraPosition, setCameraPosition] = useState({ x: 0, y: 5, z: 10 });
@@ -37,7 +39,8 @@ function App() {
     zoomStrength: 0,
     handPresent: false,
     confidence: 0,
-    handPosition: { x: 0, y: 0 }
+    handPosition: { x: 0, y: 0 },
+    handBounds: null
   });
   const [objects, setObjects] = useState([]);
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0 });
@@ -56,11 +59,66 @@ function App() {
     lastGestureTime: 0
   });
 
-  // Simplified gesture detection using webcam pixels
+  // Create localized grid around an object
+  const createLocalGrid = (position, gridSize = 5) => {
+    const gridGroup = new THREE.Group();
+    const gridDivisions = 10;
+    const step = gridSize / gridDivisions;
+    
+    const gridMaterial = new THREE.LineBasicMaterial({ 
+      color: 0xffffff, 
+      transparent: true, 
+      opacity: 0.2 
+    });
+    
+    // Create grid lines
+    const points = [];
+    for (let i = -gridSize/2; i <= gridSize/2; i += step) {
+      // X lines
+      points.push(-gridSize/2, 0, i);
+      points.push(gridSize/2, 0, i);
+      // Z lines  
+      points.push(i, 0, -gridSize/2);
+      points.push(i, 0, gridSize/2);
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+    const gridLines = new THREE.LineSegments(geometry, gridMaterial);
+    
+    gridGroup.add(gridLines);
+    gridGroup.position.copy(position);
+    
+    return gridGroup;
+  };
+
+  // Update local grids around objects
+  const updateLocalGrids = useCallback(() => {
+    if (!sceneRef.current) return;
+    
+    // Remove existing grids
+    localGridsRef.current.forEach(grid => {
+      sceneRef.current.remove(grid);
+    });
+    localGridsRef.current = [];
+    
+    // Create new grids around objects
+    const meshes = sceneRef.current.children.filter(child => 
+      child.isMesh && child.userData.isUserObject
+    );
+    
+    meshes.forEach(mesh => {
+      const grid = createLocalGrid(mesh.position);
+      sceneRef.current.add(grid);
+      localGridsRef.current.push(grid);
+    });
+  }, []);
+
+  // Enhanced gesture detection with hand bounds
   const initSimpleGestureDetection = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 320, height: 240 } 
+        video: { width: 640, height: 480 } 
       });
       
       if (videoRef.current) {
@@ -73,51 +131,83 @@ function App() {
         }, 100);
       }
     } catch (error) {
-      console.log('Webcam not available, using mouse controls only');
+      console.log('Webcam not available, using simulated gesture data');
       setGestureData(prev => ({ ...prev, confidence: 0, handPresent: false }));
     }
   }, []);
 
-  // Simple gesture detection based on video analysis
+  // Enhanced gesture detection with hand bounds
   const detectSimpleGestures = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
-    const canvas = document.createElement('canvas');
+    const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
     
     if (canvas.width === 0 || canvas.height === 0) return;
     
-    ctx.drawImage(video, 0, 0);
+    // Clear and draw video frame
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(-1, 1); // Mirror effect
+    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+    ctx.restore();
     
     try {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
       
-      // Simple motion detection based on pixel changes
+      // Simple motion and skin color detection
       let motionLevel = 0;
-      let centerX = canvas.width / 2;
-      let centerY = canvas.height / 2;
+      let handBounds = { minX: canvas.width, minY: canvas.height, maxX: 0, maxY: 0 };
+      let handPixels = 0;
       
-      // Analyze center region for hand presence
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        
-        // Detect skin-like colors (rough approximation)
-        if (r > 120 && g > 80 && b > 60 && r > g && r > b) {
-          motionLevel++;
+      // Analyze for skin-like colors and motion
+      for (let y = 0; y < canvas.height; y++) {
+        for (let x = 0; x < canvas.width; x++) {
+          const i = (y * canvas.width + x) * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          
+          // Detect skin-like colors (rough approximation)
+          if (r > 120 && g > 80 && b > 60 && r > g && r > b) {
+            motionLevel++;
+            handPixels++;
+            
+            // Update hand bounds
+            if (x < handBounds.minX) handBounds.minX = x;
+            if (x > handBounds.maxX) handBounds.maxX = x;
+            if (y < handBounds.minY) handBounds.minY = y;
+            if (y > handBounds.maxY) handBounds.maxY = y;
+          }
         }
       }
       
-      const handPresent = motionLevel > 1000;
-      const confidence = Math.min(95, (motionLevel / 1000) * 100);
+      const handPresent = motionLevel > 2000;
+      const confidence = Math.min(95, (motionLevel / 2000) * 100);
       
-      // Simulate gesture strengths based on motion
+      // Draw red box around detected hand
+      if (handPresent && handPixels > 100) {
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(
+          handBounds.minX - 10, 
+          handBounds.minY - 10, 
+          handBounds.maxX - handBounds.minX + 20, 
+          handBounds.maxY - handBounds.minY + 20
+        );
+        
+        // Add text
+        ctx.fillStyle = '#ff0000';
+        ctx.font = '16px Arial';
+        ctx.fillText('HAND DETECTED', handBounds.minX, handBounds.minY - 15);
+      }
+      
+      // Simulate gesture strengths based on hand detection
       const pinchStrength = handPresent ? 20 + Math.random() * 60 : 0;
       const grabStrength = handPresent ? 15 + Math.random() * 70 : 0;
       const zoomStrength = handPresent ? Math.random() * 100 : 0;
@@ -129,9 +219,10 @@ function App() {
         handPresent,
         confidence: confidence.toFixed(1),
         handPosition: { 
-          x: (centerX / canvas.width).toFixed(3), 
-          y: (centerY / canvas.height).toFixed(3) 
-        }
+          x: ((handBounds.minX + handBounds.maxX) / 2 / canvas.width).toFixed(3), 
+          y: ((handBounds.minY + handBounds.maxY) / 2 / canvas.height).toFixed(3) 
+        },
+        handBounds: handPresent ? handBounds : null
       });
       
       // Apply gesture controls
@@ -145,9 +236,10 @@ function App() {
         pinchStrength: (Math.random() * 100).toFixed(1),
         grabStrength: (Math.random() * 100).toFixed(1),
         zoomStrength: (Math.random() * 100).toFixed(1),
-        handPresent: Math.random() > 0.5,
+        handPresent: Math.random() > 0.7,
         confidence: (60 + Math.random() * 35).toFixed(1),
-        handPosition: { x: 0.5, y: 0.5 }
+        handPosition: { x: 0.5, y: 0.5 },
+        handBounds: null
       });
     }
   };
@@ -196,6 +288,9 @@ function App() {
         y: selectedObject.position.y.toFixed(2),
         z: selectedObject.position.z.toFixed(2)
       });
+      
+      // Update local grids when objects move
+      updateLocalGrids();
     }
   };
 
@@ -203,9 +298,9 @@ function App() {
   const initScene = useCallback(() => {
     if (!mountRef.current) return;
 
-    // Scene
+    // Scene - Pure black background
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
+    scene.background = new THREE.Color(0x000000);
     sceneRef.current = scene;
 
     // Camera
@@ -219,15 +314,15 @@ function App() {
     cameraRef.current = camera;
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.setClearColor(0x0a0a0a, 1);
+    renderer.setClearColor(0x000000, 1);
     rendererRef.current = renderer;
 
-    // Enhanced Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+    // Enhanced Lighting for cyan theme
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
     scene.add(ambientLight);
 
     const directionalLight = new THREE.DirectionalLight(0x00ffff, 0.8);
@@ -237,74 +332,19 @@ function App() {
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    const pointLight1 = new THREE.PointLight(0x00ffff, 0.5, 100);
+    const pointLight1 = new THREE.PointLight(0x00ffff, 0.6, 100);
     pointLight1.position.set(0, 10, 0);
     scene.add(pointLight1);
 
-    const pointLight2 = new THREE.PointLight(0x0080ff, 0.3, 50);
+    const pointLight2 = new THREE.PointLight(0x0080ff, 0.4, 50);
     pointLight2.position.set(-10, 5, 10);
     scene.add(pointLight2);
 
-    // Enhanced 3D Grid with better depth perception
-    const gridSize = 20;
-    const gridDivisions = 40;
-    
-    // Main grid
-    const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x003333, 0x001111);
-    scene.add(gridHelper);
-    
-    // Vertical grid planes for better 3D perception
-    const gridMaterial = new THREE.LineBasicMaterial({ 
-      color: 0x002222, 
-      transparent: true, 
-      opacity: 0.3 
-    });
-    
-    // XZ plane grid (horizontal)
-    const xzGeometry = new THREE.BufferGeometry();
-    const xzPoints = [];
-    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
-      xzPoints.push(-gridSize/2, 0, i);
-      xzPoints.push(gridSize/2, 0, i);
-      xzPoints.push(i, 0, -gridSize/2);
-      xzPoints.push(i, 0, gridSize/2);
-    }
-    xzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xzPoints, 3));
-    const xzGrid = new THREE.LineSegments(xzGeometry, gridMaterial);
-    scene.add(xzGrid);
-    
-    // YZ plane grid (vertical)
-    const yzGeometry = new THREE.BufferGeometry();
-    const yzPoints = [];
-    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
-      yzPoints.push(0, -gridSize/2, i);
-      yzPoints.push(0, gridSize/2, i);
-      yzPoints.push(0, i, -gridSize/2);
-      yzPoints.push(0, i, gridSize/2);
-    }
-    yzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(yzPoints, 3));
-    const yzGrid = new THREE.LineSegments(yzGeometry, gridMaterial);
-    scene.add(yzGrid);
-    
-    // XY plane grid (vertical)
-    const xyGeometry = new THREE.BufferGeometry();
-    const xyPoints = [];
-    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
-      xyPoints.push(-gridSize/2, i, 0);
-      xyPoints.push(gridSize/2, i, 0);
-      xyPoints.push(i, -gridSize/2, 0);
-      xyPoints.push(i, gridSize/2, 0);
-    }
-    xyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xyPoints, 3));
-    const xyGrid = new THREE.LineSegments(xyGeometry, gridMaterial);
-    scene.add(xyGrid);
+    // NO GLOBAL GRID - only local grids around objects
 
     // Enhanced Axes helper
-    const axesHelper = new THREE.AxesHelper(8);
+    const axesHelper = new THREE.AxesHelper(3);
     scene.add(axesHelper);
-    
-    // Add coordinate labels would go here
-    // Skipping font loading to avoid complexity
 
     // Mount renderer
     mountRef.current.appendChild(renderer.domElement);
@@ -336,6 +376,17 @@ function App() {
     // Update camera stats
     const distance = pos.length();
     setCameraStats(prev => ({ ...prev, distance: distance.toFixed(2) }));
+    
+    // Update local grids to follow objects
+    const meshes = sceneRef.current.children.filter(child => 
+      child.isMesh && child.userData.isUserObject
+    );
+    
+    localGridsRef.current.forEach((grid, index) => {
+      if (meshes[index]) {
+        grid.position.copy(meshes[index].position);
+      }
+    });
     
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, []);
@@ -373,6 +424,7 @@ function App() {
         y: selectedObject.position.y.toFixed(2),
         z: selectedObject.position.z.toFixed(2)
       });
+      updateLocalGrids();
     } else if (inputState.current.isRotating) {
       // Rotate camera around scene
       const spherical = new THREE.Spherical();
@@ -429,7 +481,7 @@ function App() {
     }
   };
 
-  // Add 3D shape
+  // Add 3D shape - Cyan colored
   const addShape = (shapeType) => {
     if (!sceneRef.current) return;
 
@@ -478,6 +530,9 @@ function App() {
       type: shapeType, 
       position: mesh.position 
     }]);
+    
+    // Update local grids
+    setTimeout(() => updateLocalGrids(), 100);
   };
 
   // Delete selected object
@@ -487,6 +542,7 @@ function App() {
       setObjects(prev => prev.filter(obj => obj.id !== selectedObject.userData.id));
       setSelectedObject(null);
       setCoords({ x: 0, y: 0, z: 0 });
+      updateLocalGrids();
     }
   };
 
@@ -508,7 +564,7 @@ function App() {
         clearInterval(gestureDetectionRef.current);
       }
     };
-  }, [initScene, initSimpleGestureDetection]);
+  }, [initScene, initSimpleGestureDetection, updateLocalGrids]);
 
   // Handle window resize
   useEffect(() => {
@@ -529,12 +585,15 @@ function App() {
       {/* 3D Canvas */}
       <div ref={mountRef} className="canvas-container" />
       
-      {/* Webcam video (hidden) */}
-      <video ref={videoRef} className="webcam-feed" autoPlay muted width="160" height="120" />
+      {/* Larger Webcam with gesture visualization */}
+      <div className="webcam-container">
+        <video ref={videoRef} className="webcam-feed" autoPlay muted />
+        <canvas ref={canvasRef} className="gesture-overlay" />
+      </div>
       
-      {/* JARVIS-style UI - Compact Version */}
+      {/* JARVIS-style UI - Fixed positioning */}
       <div className="jarvis-ui">
-        {/* Top Bar - Smaller */}
+        {/* Top Bar */}
         <div className="jarvis-panel top-panel">
           <div className="panel-section">
             <h1 className="title">ASTRIS 3D</h1>
@@ -545,14 +604,10 @@ function App() {
               <span className="label">CAM:</span>
               <span className="value">{cameraPosition.x}, {cameraPosition.y}, {cameraPosition.z}</span>
             </div>
-            <div className="data-field">
-              <span className="label">DIST:</span>
-              <span className="value">{cameraStats.distance}</span>
-            </div>
           </div>
         </div>
 
-        {/* Left Panel - Compact */}
+        {/* Left Panel - Higher position */}
         <div className="jarvis-panel left-panel">
           <div className="panel-header">SHAPES</div>
           <div className="tool-grid">
@@ -579,7 +634,7 @@ function App() {
           </div>
         </div>
 
-        {/* Right Panel - Compact */}
+        {/* Right Panel - Lower position to avoid webcam */}
         <div className="jarvis-panel right-panel">
           <div className="panel-header">OBJECT</div>
           <div className="data-grid">
@@ -592,7 +647,7 @@ function App() {
               <span className="value">{coords.x}, {coords.y}, {coords.z}</span>
             </div>
             <div className="data-field">
-              <span className="label">CNT:</span>
+              <span className="label">COUNT:</span>
               <span className="value">{objects.length}</span>
             </div>
           </div>
@@ -601,7 +656,9 @@ function App() {
           <div className="data-grid">
             <div className="data-field">
               <span className="label">HAND:</span>
-              <span className="value status">{gestureData.handPresent ? 'DETECTED' : 'NONE'}</span>
+              <span className={`value ${gestureData.handPresent ? 'status-active' : 'status-inactive'}`}>
+                {gestureData.handPresent ? 'DETECTED' : 'NONE'}
+              </span>
             </div>
             <div className="data-field">
               <span className="label">PINCH:</span>
@@ -618,27 +675,20 @@ function App() {
               </div>
             </div>
             <div className="data-field">
-              <span className="label">ZOOM:</span>
-              <span className="value">{gestureData.zoomStrength}%</span>
-              <div className="progress-bar">
-                <div className="progress-fill zoom-fill" style={{ width: `${gestureData.zoomStrength}%` }}></div>
-              </div>
-            </div>
-            <div className="data-field">
               <span className="label">CONF:</span>
               <span className="value">{gestureData.confidence}%</span>
             </div>
           </div>
         </div>
 
-        {/* Bottom Panel - Compact */}
+        {/* Bottom Panel */}
         <div className="jarvis-panel bottom-panel">
           <div className="instructions">
             <span className="instruction">CLICK: Select</span>
             <span className="instruction">SHIFT+DRAG: Rotate</span>
             <span className="instruction">WHEEL: Zoom</span>
-            <span className="instruction">PINCH: Move</span>
-            <span className="instruction">GRAB: Rotate</span>
+            <span className="instruction">PINCH: Zoom Camera</span>
+            <span className="instruction">GRAB: Rotate Camera</span>
           </div>
         </div>
       </div>
