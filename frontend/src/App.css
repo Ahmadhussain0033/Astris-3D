@@ -1,38 +1,406 @@
-.App {
-    text-align: center;
+/* Reset and base styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+body {
+  font-family: 'Courier New', monospace;
+  background: #0a0a0a;
+  color: #00ffff;
+  overflow: hidden;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+/* Main container */
+.astris-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: radial-gradient(circle at center, #0a0a0a 0%, #000000 100%);
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
+/* 3D Canvas */
+.canvas-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Hand tracking canvas */
+.hand-canvas {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 200px;
+  height: 150px;
+  border: 1px solid #00ffff;
+  border-radius: 4px;
+  z-index: 100;
+  opacity: 0.8;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* JARVIS UI System */
+.jarvis-ui {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  font-family: 'Courier New', monospace;
+}
+
+/* Panel base styles */
+.jarvis-panel {
+  position: absolute;
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.1) 0%, rgba(0, 150, 150, 0.05) 100%);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  color: #00ffff;
+  font-size: 12px;
+  box-shadow: 
+    0 0 20px rgba(0, 255, 255, 0.1),
+    inset 0 1px 0 rgba(0, 255, 255, 0.2);
+  animation: panelGlow 3s ease-in-out infinite alternate;
+}
+
+@keyframes panelGlow {
+  0% { box-shadow: 0 0 20px rgba(0, 255, 255, 0.1), inset 0 1px 0 rgba(0, 255, 255, 0.2); }
+  100% { box-shadow: 0 0 30px rgba(0, 255, 255, 0.2), inset 0 1px 0 rgba(0, 255, 255, 0.3); }
+}
+
+/* Top Panel */
+.top-panel {
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 15px 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 500px;
+}
+
+.panel-section {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px #00ffff;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4444;
+  animation: pulse 1s infinite;
+}
+
+.status-indicator.active {
+  background: #00ff00;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Left Panel */
+.left-panel {
+  top: 120px;
+  left: 20px;
+  width: 250px;
+  padding: 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.panel-header {
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 15px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 25px;
+}
+
+.tool-btn {
+  background: rgba(0, 255, 255, 0.1);
+  border: 1px solid rgba(0, 255, 255, 0.4);
+  border-radius: 6px;
+  padding: 15px 10px;
+  color: #00ffff;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+  font-family: inherit;
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.tool-btn:hover {
+  background: rgba(0, 255, 255, 0.2);
+  border-color: #00ffff;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 255, 255, 0.3);
+}
+
+.tool-icon {
+  font-size: 16px;
+  font-weight: bold;
+  width: 25px;
+  height: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 255, 255, 0.2);
+  border-radius: 50%;
+  margin-bottom: 2px;
+}
+
+.tool-label {
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.control-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-btn {
+  background: rgba(255, 70, 70, 0.1);
+  border: 1px solid rgba(255, 70, 70, 0.4);
+  border-radius: 6px;
+  padding: 10px;
+  color: #ff4646;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.control-btn:hover:not(:disabled) {
+  background: rgba(255, 70, 70, 0.2);
+  border-color: #ff4646;
+  box-shadow: 0 0 10px rgba(255, 70, 70, 0.5);
+}
+
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Right Panel */
+.right-panel {
+  top: 120px;
+  right: 20px;
+  width: 280px;
+  padding: 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.data-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 25px;
+}
+
+.data-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+  position: relative;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  opacity: 0.8;
+}
+
+.value {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 0 0 5px #00ffff;
+}
+
+.value.status {
+  color: #00ff00;
+  text-shadow: 0 0 5px #00ff00;
+}
+
+/* Progress bars */
+.progress-bar {
+  width: 100px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ffff, #00ff00);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+/* Bottom Panel */
+.bottom-panel {
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 15px 30px;
+  min-width: 800px;
+}
+
+.instructions {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+.instruction {
+  font-size: 10px;
+  opacity: 0.7;
+  letter-spacing: 0.5px;
+  padding: 5px 10px;
+  background: rgba(0, 255, 255, 0.05);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 255, 255, 0.1);
+}
+
+/* Scrollbar styling */
+.left-panel::-webkit-scrollbar,
+.right-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.left-panel::-webkit-scrollbar-track,
+.right-panel::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+}
+
+.left-panel::-webkit-scrollbar-thumb,
+.right-panel::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 255, 0.3);
+  border-radius: 3px;
+}
+
+.left-panel::-webkit-scrollbar-thumb:hover,
+.right-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 255, 0.5);
+}
+
+/* Responsive design */
+@media (max-width: 1200px) {
+  .left-panel, .right-panel {
+    width: 220px;
+  }
+  
+  .tool-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .bottom-panel {
+    min-width: 600px;
+  }
+  
+  .instructions {
+    gap: 15px;
+  }
+}
+
+@media (max-width: 768px) {
+  .left-panel, .right-panel {
+    width: 200px;
+    max-height: 50vh;
+  }
+  
+  .top-panel {
+    min-width: 300px;
+  }
+  
+  .bottom-panel {
+    min-width: 400px;
+  }
+  
+  .instructions {
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+    gap: 8px;
+  }
+  
+  .hand-canvas {
+    width: 150px;
+    height: 112px;
+  }
 }
 
-.App-link {
-    color: #61dafb;
+/* Special effects */
+@keyframes dataFlicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+.value {
+  animation: dataFlicker 2s ease-in-out infinite;
+}
+
+/* Holographic effect */
+.jarvis-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, transparent 49%, rgba(0, 255, 255, 0.03) 50%, transparent 51%);
+  pointer-events: none;
+  animation: scanline 3s linear infinite;
+}
+
+@keyframes scanline {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
