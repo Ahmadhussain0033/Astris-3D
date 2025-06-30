@@ -1,9 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { Camera } from '@mediapipe/camera_utils';
-import { Hands, Results } from '@mediapipe/hands';
-import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
-import { HAND_CONNECTIONS } from '@mediapipe/hands';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
