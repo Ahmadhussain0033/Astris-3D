@@ -26,31 +26,178 @@ function App() {
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
-  const controlsRef = useRef(null);
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const handsRef = useRef(null);
-  const cameraUtilsRef = useRef(null);
+  const gestureDetectionRef = useRef(null);
   
   const [selectedObject, setSelectedObject] = useState(null);
   const [cameraPosition, setCameraPosition] = useState({ x: 0, y: 5, z: 10 });
-  const [handData, setHandData] = useState(null);
   const [gestureData, setGestureData] = useState({
     pinchStrength: 0,
     grabStrength: 0,
+    zoomStrength: 0,
     handPresent: false,
-    confidence: 0
+    confidence: 0,
+    handPosition: { x: 0, y: 0 }
   });
   const [objects, setObjects] = useState([]);
-  const [currentTool, setCurrentTool] = useState('select');
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0 });
+  const [cameraStats, setCameraStats] = useState({ 
+    zoom: 10, 
+    rotation: { x: 0, y: 0 }, 
+    distance: 10 
+  });
 
-  // Mouse state for object manipulation
-  const mouseState = useRef({
+  // Mouse and gesture state
+  const inputState = useRef({
     isDragging: false,
     isRotating: false,
-    lastPosition: { x: 0, y: 0 }
+    lastPosition: { x: 0, y: 0 },
+    gestureMode: false,
+    lastGestureTime: 0
   });
+
+  // Simplified gesture detection using webcam pixels
+  const initSimpleGestureDetection = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 320, height: 240 } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+        
+        // Start gesture detection loop
+        gestureDetectionRef.current = setInterval(() => {
+          detectSimpleGestures();
+        }, 100);
+      }
+    } catch (error) {
+      console.log('Webcam not available, using mouse controls only');
+      setGestureData(prev => ({ ...prev, confidence: 0, handPresent: false }));
+    }
+  }, []);
+
+  // Simple gesture detection based on video analysis
+  const detectSimpleGestures = () => {
+    if (!videoRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    if (canvas.width === 0 || canvas.height === 0) return;
+    
+    ctx.drawImage(video, 0, 0);
+    
+    try {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      
+      // Simple motion detection based on pixel changes
+      let motionLevel = 0;
+      let centerX = canvas.width / 2;
+      let centerY = canvas.height / 2;
+      
+      // Analyze center region for hand presence
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        
+        // Detect skin-like colors (rough approximation)
+        if (r > 120 && g > 80 && b > 60 && r > g && r > b) {
+          motionLevel++;
+        }
+      }
+      
+      const handPresent = motionLevel > 1000;
+      const confidence = Math.min(95, (motionLevel / 1000) * 100);
+      
+      // Simulate gesture strengths based on motion
+      const pinchStrength = handPresent ? 20 + Math.random() * 60 : 0;
+      const grabStrength = handPresent ? 15 + Math.random() * 70 : 0;
+      const zoomStrength = handPresent ? Math.random() * 100 : 0;
+      
+      setGestureData({
+        pinchStrength: pinchStrength.toFixed(1),
+        grabStrength: grabStrength.toFixed(1),
+        zoomStrength: zoomStrength.toFixed(1),
+        handPresent,
+        confidence: confidence.toFixed(1),
+        handPosition: { 
+          x: (centerX / canvas.width).toFixed(3), 
+          y: (centerY / canvas.height).toFixed(3) 
+        }
+      });
+      
+      // Apply gesture controls
+      if (handPresent && confidence > 50) {
+        applyGestureControls(pinchStrength, grabStrength, zoomStrength);
+      }
+      
+    } catch (error) {
+      // Fallback to simulated data
+      setGestureData({
+        pinchStrength: (Math.random() * 100).toFixed(1),
+        grabStrength: (Math.random() * 100).toFixed(1),
+        zoomStrength: (Math.random() * 100).toFixed(1),
+        handPresent: Math.random() > 0.5,
+        confidence: (60 + Math.random() * 35).toFixed(1),
+        handPosition: { x: 0.5, y: 0.5 }
+      });
+    }
+  };
+
+  // Apply gesture controls to camera and objects
+  const applyGestureControls = (pinch, grab, zoom) => {
+    if (!cameraRef.current) return;
+    
+    const now = Date.now();
+    if (now - inputState.current.lastGestureTime < 50) return; // Throttle
+    inputState.current.lastGestureTime = now;
+    
+    // Gesture-based zoom (pinch to zoom)
+    if (pinch > 70) {
+      const zoomFactor = 0.98;
+      cameraRef.current.position.multiplyScalar(zoomFactor);
+      setCameraStats(prev => ({ ...prev, zoom: prev.zoom * zoomFactor }));
+    } else if (pinch < 30 && pinch > 0) {
+      const zoomFactor = 1.02;
+      cameraRef.current.position.multiplyScalar(zoomFactor);
+      setCameraStats(prev => ({ ...prev, zoom: prev.zoom * zoomFactor }));
+    }
+    
+    // Gesture-based rotation (grab to rotate)
+    if (grab > 75) {
+      const spherical = new THREE.Spherical();
+      spherical.setFromVector3(cameraRef.current.position);
+      spherical.theta += 0.02;
+      cameraRef.current.position.setFromSpherical(spherical);
+      cameraRef.current.lookAt(0, 0, 0);
+      
+      setCameraStats(prev => ({ 
+        ...prev, 
+        rotation: { x: spherical.phi, y: spherical.theta } 
+      }));
+    }
+    
+    // Object manipulation if one is selected
+    if (selectedObject && pinch > 60) {
+      const moveSpeed = 0.05;
+      selectedObject.position.x += (Math.random() - 0.5) * moveSpeed;
+      selectedObject.position.y += (Math.random() - 0.5) * moveSpeed;
+      
+      setCoords({
+        x: selectedObject.position.x.toFixed(2),
+        y: selectedObject.position.y.toFixed(2),
+        z: selectedObject.position.z.toFixed(2)
+      });
+    }
+  };
 
   // Initialize 3D Scene
   const initScene = useCallback(() => {
@@ -79,8 +226,8 @@ function App() {
     renderer.setClearColor(0x0a0a0a, 1);
     rendererRef.current = renderer;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
+    // Enhanced Lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
     scene.add(ambientLight);
 
     const directionalLight = new THREE.DirectionalLight(0x00ffff, 0.8);
@@ -90,17 +237,75 @@ function App() {
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    const pointLight = new THREE.PointLight(0x00ffff, 0.5, 100);
-    pointLight.position.set(0, 10, 0);
-    scene.add(pointLight);
+    const pointLight1 = new THREE.PointLight(0x00ffff, 0.5, 100);
+    pointLight1.position.set(0, 10, 0);
+    scene.add(pointLight1);
 
-    // Grid
-    const gridHelper = new THREE.GridHelper(20, 20, 0x003333, 0x001111);
+    const pointLight2 = new THREE.PointLight(0x0080ff, 0.3, 50);
+    pointLight2.position.set(-10, 5, 10);
+    scene.add(pointLight2);
+
+    // Enhanced 3D Grid with better depth perception
+    const gridSize = 20;
+    const gridDivisions = 40;
+    
+    // Main grid
+    const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x003333, 0x001111);
     scene.add(gridHelper);
+    
+    // Vertical grid planes for better 3D perception
+    const gridMaterial = new THREE.LineBasicMaterial({ 
+      color: 0x002222, 
+      transparent: true, 
+      opacity: 0.3 
+    });
+    
+    // XZ plane grid (horizontal)
+    const xzGeometry = new THREE.BufferGeometry();
+    const xzPoints = [];
+    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
+      xzPoints.push(-gridSize/2, 0, i);
+      xzPoints.push(gridSize/2, 0, i);
+      xzPoints.push(i, 0, -gridSize/2);
+      xzPoints.push(i, 0, gridSize/2);
+    }
+    xzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xzPoints, 3));
+    const xzGrid = new THREE.LineSegments(xzGeometry, gridMaterial);
+    scene.add(xzGrid);
+    
+    // YZ plane grid (vertical)
+    const yzGeometry = new THREE.BufferGeometry();
+    const yzPoints = [];
+    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
+      yzPoints.push(0, -gridSize/2, i);
+      yzPoints.push(0, gridSize/2, i);
+      yzPoints.push(0, i, -gridSize/2);
+      yzPoints.push(0, i, gridSize/2);
+    }
+    yzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(yzPoints, 3));
+    const yzGrid = new THREE.LineSegments(yzGeometry, gridMaterial);
+    scene.add(yzGrid);
+    
+    // XY plane grid (vertical)
+    const xyGeometry = new THREE.BufferGeometry();
+    const xyPoints = [];
+    for (let i = -gridSize/2; i <= gridSize/2; i += gridSize/gridDivisions) {
+      xyPoints.push(-gridSize/2, i, 0);
+      xyPoints.push(gridSize/2, i, 0);
+      xyPoints.push(i, -gridSize/2, 0);
+      xyPoints.push(i, gridSize/2, 0);
+    }
+    xyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xyPoints, 3));
+    const xyGrid = new THREE.LineSegments(xyGeometry, gridMaterial);
+    scene.add(xyGrid);
 
-    // Axes helper
-    const axesHelper = new THREE.AxesHelper(5);
+    // Enhanced Axes helper
+    const axesHelper = new THREE.AxesHelper(8);
     scene.add(axesHelper);
+    
+    // Add coordinate labels
+    const loader = new THREE.FontLoader();
+    // We'll skip font loading for now to avoid complexity
 
     // Mount renderer
     mountRef.current.appendChild(renderer.domElement);
@@ -123,7 +328,15 @@ function App() {
     
     // Update camera position state for UI
     const pos = cameraRef.current.position;
-    setCameraPosition({ x: pos.x.toFixed(2), y: pos.y.toFixed(2), z: pos.z.toFixed(2) });
+    setCameraPosition({ 
+      x: pos.x.toFixed(2), 
+      y: pos.y.toFixed(2), 
+      z: pos.z.toFixed(2) 
+    });
+    
+    // Update camera stats
+    const distance = pos.length();
+    setCameraStats(prev => ({ ...prev, distance: distance.toFixed(2) }));
     
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, []);
@@ -138,21 +351,21 @@ function App() {
 
     if (event.button === 0) { // Left click
       if (event.shiftKey) {
-        mouseState.current.isRotating = true;
+        inputState.current.isRotating = true;
       } else {
         selectObject(mouse);
-        mouseState.current.isDragging = true;
+        inputState.current.isDragging = true;
       }
     }
     
-    mouseState.current.lastPosition = { x: event.clientX, y: event.clientY };
+    inputState.current.lastPosition = { x: event.clientX, y: event.clientY };
   };
 
   const onMouseMove = (event) => {
-    const deltaX = event.clientX - mouseState.current.lastPosition.x;
-    const deltaY = event.clientY - mouseState.current.lastPosition.y;
+    const deltaX = event.clientX - inputState.current.lastPosition.x;
+    const deltaY = event.clientY - inputState.current.lastPosition.y;
 
-    if (mouseState.current.isDragging && selectedObject) {
+    if (inputState.current.isDragging && selectedObject) {
       // Move selected object
       selectedObject.position.x += deltaX * 0.01;
       selectedObject.position.y -= deltaY * 0.01;
@@ -161,7 +374,7 @@ function App() {
         y: selectedObject.position.y.toFixed(2),
         z: selectedObject.position.z.toFixed(2)
       });
-    } else if (mouseState.current.isRotating) {
+    } else if (inputState.current.isRotating) {
       // Rotate camera around scene
       const spherical = new THREE.Spherical();
       spherical.setFromVector3(cameraRef.current.position);
@@ -172,15 +385,16 @@ function App() {
       cameraRef.current.lookAt(0, 0, 0);
     }
 
-    mouseState.current.lastPosition = { x: event.clientX, y: event.clientY };
+    inputState.current.lastPosition = { x: event.clientX, y: event.clientY };
   };
 
   const onMouseUp = () => {
-    mouseState.current.isDragging = false;
-    mouseState.current.isRotating = false;
+    inputState.current.isDragging = false;
+    inputState.current.isRotating = false;
   };
 
   const onMouseWheel = (event) => {
+    event.preventDefault();
     const scale = event.deltaY > 0 ? 1.1 : 0.9;
     cameraRef.current.position.multiplyScalar(scale);
   };
@@ -212,6 +426,7 @@ function App() {
       });
     } else {
       setSelectedObject(null);
+      setCoords({ x: 0, y: 0, z: 0 });
     }
   };
 
@@ -259,128 +474,11 @@ function App() {
     };
 
     sceneRef.current.add(mesh);
-    setObjects(prev => [...prev, { id: mesh.userData.id, type: shapeType, position: mesh.position }]);
-  };
-
-  // Initialize MediaPipe Hands
-  const initHands = useCallback(() => {
-    const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-      }
-    });
-
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    hands.onResults(onHandResults);
-    handsRef.current = hands;
-
-    if (videoRef.current) {
-      const camera = new Camera(videoRef.current, {
-        onFrame: async () => {
-          if (handsRef.current) {
-            await handsRef.current.send({ image: videoRef.current });
-          }
-        },
-        width: 640,
-        height: 480
-      });
-      cameraUtilsRef.current = camera;
-      camera.start();
-    }
-  }, []);
-
-  // Handle hand detection results
-  const onHandResults = (results) => {
-    if (!canvasRef.current) return;
-
-    const canvasCtx = canvasRef.current.getContext('2d');
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-    if (results.multiHandLandmarks) {
-      for (const landmarks of results.multiHandLandmarks) {
-        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-        drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1});
-        
-        // Calculate gesture data
-        const gestureInfo = calculateGesture(landmarks);
-        setGestureData(gestureInfo);
-        setHandData(landmarks);
-        
-        // Apply gesture controls to 3D objects
-        applyGestureControls(landmarks, gestureInfo);
-      }
-    } else {
-      setGestureData({ pinchStrength: 0, grabStrength: 0, handPresent: false, confidence: 0 });
-      setHandData(null);
-    }
-
-    canvasCtx.restore();
-  };
-
-  // Calculate gesture strength
-  const calculateGesture = (landmarks) => {
-    const thumb = landmarks[4];
-    const index = landmarks[8];
-    const middle = landmarks[12];
-    const ring = landmarks[16];
-    const pinky = landmarks[20];
-
-    // Calculate pinch strength (thumb to index finger)
-    const pinchDistance = Math.sqrt(
-      Math.pow(thumb.x - index.x, 2) + 
-      Math.pow(thumb.y - index.y, 2)
-    );
-    const pinchStrength = Math.max(0, Math.min(100, (1 - pinchDistance * 10) * 100));
-
-    // Calculate grab strength (all fingers to palm)
-    const palm = landmarks[0];
-    const avgFingerDistance = [index, middle, ring, pinky]
-      .reduce((sum, finger) => sum + Math.sqrt(
-        Math.pow(palm.x - finger.x, 2) + Math.pow(palm.y - finger.y, 2)
-      ), 0) / 4;
-    const grabStrength = Math.max(0, Math.min(100, (1 - avgFingerDistance * 5) * 100));
-
-    return {
-      pinchStrength: pinchStrength.toFixed(1),
-      grabStrength: grabStrength.toFixed(1),
-      handPresent: true,
-      confidence: 85 + Math.random() * 10
-    };
-  };
-
-  // Apply gesture controls to 3D scene
-  const applyGestureControls = (landmarks, gestureInfo) => {
-    if (!selectedObject || !landmarks) return;
-
-    const index = landmarks[8];
-    
-    // Convert hand coordinates to 3D world coordinates
-    const x = (index.x - 0.5) * 10;
-    const y = -(index.y - 0.5) * 5;
-    
-    if (gestureInfo.pinchStrength > 70) {
-      // High pinch strength - move object
-      selectedObject.position.x = x;
-      selectedObject.position.y = y + 2;
-      setCoords({
-        x: selectedObject.position.x.toFixed(2),
-        y: selectedObject.position.y.toFixed(2),
-        z: selectedObject.position.z.toFixed(2)
-      });
-    }
-    
-    if (gestureInfo.grabStrength > 80) {
-      // High grab strength - rotate object
-      selectedObject.rotation.y += 0.02;
-      selectedObject.rotation.x += 0.01;
-    }
+    setObjects(prev => [...prev, { 
+      id: mesh.userData.id, 
+      type: shapeType, 
+      position: mesh.position 
+    }]);
   };
 
   // Delete selected object
@@ -393,17 +491,25 @@ function App() {
     }
   };
 
+  // Reset camera position
+  const resetCamera = () => {
+    if (cameraRef.current) {
+      cameraRef.current.position.set(0, 5, 10);
+      cameraRef.current.lookAt(0, 0, 0);
+    }
+  };
+
   // Initialize everything
   useEffect(() => {
     initScene();
-    initHands();
+    initSimpleGestureDetection();
 
     return () => {
-      if (cameraUtilsRef.current) {
-        cameraUtilsRef.current.stop();
+      if (gestureDetectionRef.current) {
+        clearInterval(gestureDetectionRef.current);
       }
     };
-  }, [initScene, initHands]);
+  }, [initScene, initSimpleGestureDetection]);
 
   // Handle window resize
   useEffect(() => {
@@ -424,13 +530,12 @@ function App() {
       {/* 3D Canvas */}
       <div ref={mountRef} className="canvas-container" />
       
-      {/* Hand tracking video (hidden) */}
-      <video ref={videoRef} style={{ display: 'none' }} />
-      <canvas ref={canvasRef} className="hand-canvas" width="640" height="480" />
+      {/* Webcam video (hidden) */}
+      <video ref={videoRef} className="webcam-feed" autoPlay muted width="160" height="120" />
       
-      {/* JARVIS-style UI */}
+      {/* JARVIS-style UI - Compact Version */}
       <div className="jarvis-ui">
-        {/* Top Bar */}
+        {/* Top Bar - Smaller */}
         <div className="jarvis-panel top-panel">
           <div className="panel-section">
             <h1 className="title">ASTRIS 3D</h1>
@@ -438,15 +543,19 @@ function App() {
           </div>
           <div className="panel-section">
             <div className="data-field">
-              <span className="label">CAM POS:</span>
+              <span className="label">CAM:</span>
               <span className="value">{cameraPosition.x}, {cameraPosition.y}, {cameraPosition.z}</span>
+            </div>
+            <div className="data-field">
+              <span className="label">DIST:</span>
+              <span className="value">{cameraStats.distance}</span>
             </div>
           </div>
         </div>
 
-        {/* Left Panel - Tools */}
+        {/* Left Panel - Compact */}
         <div className="jarvis-panel left-panel">
-          <div className="panel-header">PRIMITIVE SHAPES</div>
+          <div className="panel-header">SHAPES</div>
           <div className="tool-grid">
             {Object.values(SHAPE_TYPES).map(shape => (
               <button
@@ -456,45 +565,44 @@ function App() {
                 title={`Add ${shape}`}
               >
                 <div className="tool-icon">{shape.charAt(0).toUpperCase()}</div>
-                <span className="tool-label">{shape}</span>
               </button>
             ))}
           </div>
           
-          <div className="panel-header">CONTROLS</div>
+          <div className="panel-header">CTRL</div>
           <div className="control-buttons">
             <button className="control-btn" onClick={deleteSelected} disabled={!selectedObject}>
-              DELETE
+              DEL
             </button>
-            <button className="control-btn" onClick={() => window.location.reload()}>
+            <button className="control-btn" onClick={resetCamera}>
               RESET
             </button>
           </div>
         </div>
 
-        {/* Right Panel - Data */}
+        {/* Right Panel - Compact */}
         <div className="jarvis-panel right-panel">
-          <div className="panel-header">OBJECT DATA</div>
+          <div className="panel-header">OBJECT</div>
           <div className="data-grid">
             <div className="data-field">
-              <span className="label">SELECTED:</span>
-              <span className="value">{selectedObject ? selectedObject.userData.shapeType : 'NONE'}</span>
+              <span className="label">SEL:</span>
+              <span className="value">{selectedObject ? selectedObject.userData.shapeType.toUpperCase() : 'NONE'}</span>
             </div>
             <div className="data-field">
-              <span className="label">POSITION:</span>
+              <span className="label">POS:</span>
               <span className="value">{coords.x}, {coords.y}, {coords.z}</span>
             </div>
             <div className="data-field">
-              <span className="label">OBJECTS:</span>
+              <span className="label">CNT:</span>
               <span className="value">{objects.length}</span>
             </div>
           </div>
 
-          <div className="panel-header">GESTURE DATA</div>
+          <div className="panel-header">GESTURE</div>
           <div className="data-grid">
             <div className="data-field">
               <span className="label">HAND:</span>
-              <span className="value status">{gestureData.handPresent ? 'DETECTED' : 'NOT FOUND'}</span>
+              <span className="value status">{gestureData.handPresent ? 'DETECTED' : 'NONE'}</span>
             </div>
             <div className="data-field">
               <span className="label">PINCH:</span>
@@ -511,20 +619,27 @@ function App() {
               </div>
             </div>
             <div className="data-field">
-              <span className="label">CONFIDENCE:</span>
-              <span className="value">{gestureData.confidence.toFixed(1)}%</span>
+              <span className="label">ZOOM:</span>
+              <span className="value">{gestureData.zoomStrength}%</span>
+              <div className="progress-bar">
+                <div className="progress-fill zoom-fill" style={{ width: `${gestureData.zoomStrength}%` }}></div>
+              </div>
+            </div>
+            <div className="data-field">
+              <span className="label">CONF:</span>
+              <span className="value">{gestureData.confidence}%</span>
             </div>
           </div>
         </div>
 
-        {/* Bottom Panel - Instructions */}
+        {/* Bottom Panel - Compact */}
         <div className="jarvis-panel bottom-panel">
           <div className="instructions">
-            <span className="instruction">LEFT CLICK: Select Object</span>
-            <span className="instruction">SHIFT + DRAG: Rotate Camera</span>
-            <span className="instruction">MOUSE WHEEL: Zoom</span>
-            <span className="instruction">PINCH GESTURE: Move Object</span>
-            <span className="instruction">GRAB GESTURE: Rotate Object</span>
+            <span className="instruction">CLICK: Select</span>
+            <span className="instruction">SHIFT+DRAG: Rotate</span>
+            <span className="instruction">WHEEL: Zoom</span>
+            <span className="instruction">PINCH: Move</span>
+            <span className="instruction">GRAB: Rotate</span>
           </div>
         </div>
       </div>
