@@ -762,6 +762,9 @@ function App() {
             <button className="control-btn" onClick={resetCamera}>
               RESET
             </button>
+            <button className="control-btn download-btn" onClick={downloadSculpture}>
+              DOWNLOAD
+            </button>
           </div>
         </div>
 
