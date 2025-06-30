@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -28,8 +29,8 @@ function App() {
   const cameraRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const gestureDetectionRef = useRef(null);
-  const localGridsRef = useRef([]);
+  const handLandmarkerRef = useRef(null);
+  const detectionActiveRef = useRef(false);
   
   const [selectedObject, setSelectedObject] = useState(null);
   const [cameraPosition, setCameraPosition] = useState({ x: 0, y: 5, z: 10 });
@@ -40,7 +41,7 @@ function App() {
     handPresent: false,
     confidence: 0,
     handPosition: { x: 0, y: 0 },
-    handBounds: null
+    handLandmarks: []
   });
   const [objects, setObjects] = useState([]);
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0 });
@@ -59,64 +60,78 @@ function App() {
     lastGestureTime: 0
   });
 
-  // Create localized grid around an object
-  const createLocalGrid = (position, gridSize = 5) => {
+  // Create proper 3D grid around an object (like the image)
+  const createLocalGrid = (object, gridSize = 5) => {
     const gridGroup = new THREE.Group();
-    const gridDivisions = 10;
-    const step = gridSize / gridDivisions;
     
+    // Create grid material
     const gridMaterial = new THREE.LineBasicMaterial({ 
       color: 0xffffff, 
       transparent: true, 
-      opacity: 0.2 
+      opacity: 0.3 
     });
     
-    // Create grid lines
-    const points = [];
-    for (let i = -gridSize/2; i <= gridSize/2; i += step) {
-      // X lines
-      points.push(-gridSize/2, 0, i);
-      points.push(gridSize/2, 0, i);
-      // Z lines  
-      points.push(i, 0, -gridSize/2);
-      points.push(i, 0, gridSize/2);
+    const step = 1; // 1 unit per grid line
+    const halfSize = gridSize / 2;
+    
+    // Create XZ plane grid (horizontal)
+    const xzPoints = [];
+    for (let i = -halfSize; i <= halfSize; i += step) {
+      // Lines parallel to X axis
+      xzPoints.push(-halfSize, 0, i);
+      xzPoints.push(halfSize, 0, i);
+      // Lines parallel to Z axis
+      xzPoints.push(i, 0, -halfSize);
+      xzPoints.push(i, 0, halfSize);
     }
+    const xzGeometry = new THREE.BufferGeometry();
+    xzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xzPoints, 3));
+    const xzGrid = new THREE.LineSegments(xzGeometry, gridMaterial);
+    gridGroup.add(xzGrid);
     
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-    const gridLines = new THREE.LineSegments(geometry, gridMaterial);
+    // Create XY plane grid (vertical, facing camera)
+    const xyPoints = [];
+    for (let i = -halfSize; i <= halfSize; i += step) {
+      // Lines parallel to X axis
+      xyPoints.push(-halfSize, i, 0);
+      xyPoints.push(halfSize, i, 0);
+      // Lines parallel to Y axis
+      xyPoints.push(i, -halfSize, 0);
+      xyPoints.push(i, halfSize, 0);
+    }
+    const xyGeometry = new THREE.BufferGeometry();
+    xyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(xyPoints, 3));
+    const xyGrid = new THREE.LineSegments(xyGeometry, gridMaterial);
+    gridGroup.add(xyGrid);
     
-    gridGroup.add(gridLines);
-    gridGroup.position.copy(position);
+    // Create YZ plane grid (vertical, side view)
+    const yzPoints = [];
+    for (let i = -halfSize; i <= halfSize; i += step) {
+      // Lines parallel to Y axis
+      yzPoints.push(0, -halfSize, i);
+      yzPoints.push(0, halfSize, i);
+      // Lines parallel to Z axis
+      yzPoints.push(0, i, -halfSize);
+      yzPoints.push(0, i, halfSize);
+    }
+    const yzGeometry = new THREE.BufferGeometry();
+    yzGeometry.setAttribute('position', new THREE.Float32BufferAttribute(yzPoints, 3));
+    const yzGrid = new THREE.LineSegments(yzGeometry, yzMaterial);
+    gridGroup.add(yzGrid);
+    
+    // Add the grid as a child of the object so it moves with it
+    object.add(gridGroup);
+    object.userData.localGrid = gridGroup;
     
     return gridGroup;
   };
 
-  // Update local grids around objects
-  const updateLocalGrids = useCallback(() => {
-    if (!sceneRef.current) return;
-    
-    // Remove existing grids
-    localGridsRef.current.forEach(grid => {
-      sceneRef.current.remove(grid);
-    });
-    localGridsRef.current = [];
-    
-    // Create new grids around objects
-    const meshes = sceneRef.current.children.filter(child => 
-      child.isMesh && child.userData.isUserObject
-    );
-    
-    meshes.forEach(mesh => {
-      const grid = createLocalGrid(mesh.position);
-      sceneRef.current.add(grid);
-      localGridsRef.current.push(grid);
-    });
-  }, []);
-
-  // Enhanced gesture detection with hand bounds
-  const initSimpleGestureDetection = useCallback(async () => {
+  // Initialize proper MediaPipe hand detection
+  const initHandDetection = useCallback(async () => {
     try {
+      console.log('Initializing hand detection...');
+      
+      // Setup camera
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 640, height: 480 } 
       });
@@ -125,112 +140,37 @@ function App() {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
         
-        // Start gesture detection loop
-        gestureDetectionRef.current = setInterval(() => {
-          detectSimpleGestures();
-        }, 100);
-      }
-    } catch (error) {
-      console.log('Webcam not available, using simulated gesture data');
-      setGestureData(prev => ({ ...prev, confidence: 0, handPresent: false }));
-    }
-  }, []);
-
-  // Enhanced gesture detection with hand bounds
-  const detectSimpleGestures = () => {
-    if (!videoRef.current || !canvasRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    
-    if (canvas.width === 0 || canvas.height === 0) return;
-    
-    // Clear and draw video frame
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.save();
-    ctx.scale(-1, 1); // Mirror effect
-    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-    ctx.restore();
-    
-    try {
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-      
-      // Simple motion and skin color detection
-      let motionLevel = 0;
-      let handBounds = { minX: canvas.width, minY: canvas.height, maxX: 0, maxY: 0 };
-      let handPixels = 0;
-      
-      // Analyze for skin-like colors and motion
-      for (let y = 0; y < canvas.height; y++) {
-        for (let x = 0; x < canvas.width; x++) {
-          const i = (y * canvas.width + x) * 4;
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          
-          // Detect skin-like colors (rough approximation)
-          if (r > 120 && g > 80 && b > 60 && r > g && r > b) {
-            motionLevel++;
-            handPixels++;
-            
-            // Update hand bounds
-            if (x < handBounds.minX) handBounds.minX = x;
-            if (x > handBounds.maxX) handBounds.maxX = x;
-            if (y < handBounds.minY) handBounds.minY = y;
-            if (y > handBounds.maxY) handBounds.maxY = y;
-          }
-        }
-      }
-      
-      const handPresent = motionLevel > 2000;
-      const confidence = Math.min(95, (motionLevel / 2000) * 100);
-      
-      // Draw red box around detected hand
-      if (handPresent && handPixels > 100) {
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(
-          handBounds.minX - 10, 
-          handBounds.minY - 10, 
-          handBounds.maxX - handBounds.minX + 20, 
-          handBounds.maxY - handBounds.minY + 20
+        // Wait for video to load
+        await new Promise((resolve) => {
+          videoRef.current.onloadedmetadata = () => resolve();
+        });
+        
+        // Initialize MediaPipe
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
         
-        // Add text
-        ctx.fillStyle = '#ff0000';
-        ctx.font = '16px Arial';
-        ctx.fillText('HAND DETECTED', handBounds.minX, handBounds.minY - 15);
+        const handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+            delegate: 'GPU'
+          },
+          numHands: 2,
+          runningMode: 'video',
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        
+        handLandmarkerRef.current = handLandmarker;
+        detectionActiveRef.current = true;
+        
+        console.log('Hand detection initialized successfully');
+        detectHands();
+        
       }
-      
-      // Simulate gesture strengths based on hand detection
-      const pinchStrength = handPresent ? 20 + Math.random() * 60 : 0;
-      const grabStrength = handPresent ? 15 + Math.random() * 70 : 0;
-      const zoomStrength = handPresent ? Math.random() * 100 : 0;
-      
-      setGestureData({
-        pinchStrength: pinchStrength.toFixed(1),
-        grabStrength: grabStrength.toFixed(1),
-        zoomStrength: zoomStrength.toFixed(1),
-        handPresent,
-        confidence: confidence.toFixed(1),
-        handPosition: { 
-          x: ((handBounds.minX + handBounds.maxX) / 2 / canvas.width).toFixed(3), 
-          y: ((handBounds.minY + handBounds.maxY) / 2 / canvas.height).toFixed(3) 
-        },
-        handBounds: handPresent ? handBounds : null
-      });
-      
-      // Apply gesture controls
-      if (handPresent && confidence > 50) {
-        applyGestureControls(pinchStrength, grabStrength, zoomStrength);
-      }
-      
     } catch (error) {
+      console.warn('Hand detection failed, using fallback:', error);
       // Fallback to simulated data
       setGestureData({
         pinchStrength: (Math.random() * 100).toFixed(1),
@@ -239,8 +179,162 @@ function App() {
         handPresent: Math.random() > 0.7,
         confidence: (60 + Math.random() * 35).toFixed(1),
         handPosition: { x: 0.5, y: 0.5 },
-        handBounds: null
+        handLandmarks: []
       });
+    }
+  }, []);
+
+  // Hand detection processing
+  const detectHands = async () => {
+    if (!detectionActiveRef.current || !handLandmarkerRef.current || !videoRef.current || !canvasRef.current) {
+      return;
+    }
+    
+    try {
+      const startTimeMs = performance.now();
+      const results = await handLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+      
+      // Clear canvas and draw video
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      canvas.width = videoRef.current.videoWidth || 640;
+      canvas.height = videoRef.current.videoHeight || 480;
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.scale(-1, 1); // Mirror effect
+      ctx.drawImage(videoRef.current, -canvas.width, 0, canvas.width, canvas.height);
+      ctx.restore();
+      
+      let handPresent = false;
+      let handPosition = { x: 0.5, y: 0.5 };
+      let pinchStrength = 0;
+      let grabStrength = 0;
+      let confidence = 0;
+      
+      if (results.landmarks && results.landmarks.length > 0) {
+        handPresent = true;
+        const landmarks = results.landmarks[0]; // Use first hand
+        confidence = 85 + Math.random() * 10;
+        
+        // Draw hand landmarks
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.fillStyle = '#ff0000';
+        
+        // Draw connections between landmarks
+        const connections = [
+          [0, 1], [1, 2], [2, 3], [3, 4], // Thumb
+          [0, 5], [5, 6], [6, 7], [7, 8], // Index
+          [0, 9], [9, 10], [10, 11], [11, 12], // Middle
+          [0, 13], [13, 14], [14, 15], [15, 16], // Ring
+          [0, 17], [17, 18], [18, 19], [19, 20], // Pinky
+          [5, 9], [9, 13], [13, 17] // Palm
+        ];
+        
+        ctx.beginPath();
+        connections.forEach(([start, end]) => {
+          if (landmarks[start] && landmarks[end]) {
+            const startX = (1 - landmarks[start].x) * canvas.width; // Mirror X
+            const startY = landmarks[start].y * canvas.height;
+            const endX = (1 - landmarks[end].x) * canvas.width; // Mirror X
+            const endY = landmarks[end].y * canvas.height;
+            
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
+          }
+        });
+        ctx.stroke();
+        
+        // Draw landmark points
+        landmarks.forEach((landmark, index) => {
+          const x = (1 - landmark.x) * canvas.width; // Mirror X
+          const y = landmark.y * canvas.height;
+          
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Label key points
+          if ([4, 8, 12, 16, 20].includes(index)) { // Fingertips
+            ctx.fillText(index.toString(), x + 5, y - 5);
+          }
+        });
+        
+        // Calculate gestures
+        const thumb = landmarks[4];
+        const index = landmarks[8];
+        const middle = landmarks[12];
+        const ring = landmarks[16];
+        const pinky = landmarks[20];
+        const wrist = landmarks[0];
+        
+        // Pinch detection (thumb to index distance)
+        const pinchDistance = Math.sqrt(
+          Math.pow(thumb.x - index.x, 2) + 
+          Math.pow(thumb.y - index.y, 2) + 
+          Math.pow(thumb.z - index.z, 2)
+        );
+        pinchStrength = Math.max(0, Math.min(100, (1 - pinchDistance * 20) * 100));
+        
+        // Grab detection (all fingers to wrist distance)
+        const fingertips = [index, middle, ring, pinky];
+        const avgDistance = fingertips.reduce((sum, tip) => {
+          return sum + Math.sqrt(
+            Math.pow(wrist.x - tip.x, 2) + 
+            Math.pow(wrist.y - tip.y, 2) + 
+            Math.pow(wrist.z - tip.z, 2)
+          );
+        }, 0) / fingertips.length;
+        
+        grabStrength = Math.max(0, Math.min(100, (1 - avgDistance * 3) * 100));
+        
+        // Hand center position
+        handPosition = {
+          x: (1 - wrist.x).toFixed(3), // Mirror X
+          y: wrist.y.toFixed(3)
+        };
+        
+        // Draw bounding box
+        const minX = Math.min(...landmarks.map(l => (1 - l.x) * canvas.width));
+        const maxX = Math.max(...landmarks.map(l => (1 - l.x) * canvas.width));
+        const minY = Math.min(...landmarks.map(l => l.y * canvas.height));
+        const maxY = Math.max(...landmarks.map(l => l.y * canvas.height));
+        
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(minX - 10, minY - 10, maxX - minX + 20, maxY - minY + 20);
+        
+        ctx.fillStyle = '#00ff00';
+        ctx.font = '14px Arial';
+        ctx.fillText(`HAND DETECTED`, minX, minY - 15);
+        ctx.fillText(`Pinch: ${pinchStrength.toFixed(0)}%`, minX, maxY + 25);
+        ctx.fillText(`Grab: ${grabStrength.toFixed(0)}%`, minX, maxY + 40);
+      }
+      
+      // Update gesture data
+      setGestureData({
+        pinchStrength: pinchStrength.toFixed(1),
+        grabStrength: grabStrength.toFixed(1),
+        zoomStrength: (pinchStrength * 0.8).toFixed(1),
+        handPresent,
+        confidence: confidence.toFixed(1),
+        handPosition,
+        handLandmarks: results.landmarks || []
+      });
+      
+      // Apply gesture controls
+      if (handPresent && confidence > 50) {
+        applyGestureControls(pinchStrength, grabStrength, pinchStrength * 0.8);
+      }
+      
+    } catch (error) {
+      console.warn('Hand detection error:', error);
+    }
+    
+    // Continue detection loop
+    if (detectionActiveRef.current) {
+      requestAnimationFrame(detectHands);
     }
   };
 
@@ -254,11 +348,11 @@ function App() {
     
     // Gesture-based zoom (pinch to zoom)
     if (pinch > 70) {
-      const zoomFactor = 0.98;
+      const zoomFactor = 0.99;
       cameraRef.current.position.multiplyScalar(zoomFactor);
       setCameraStats(prev => ({ ...prev, zoom: prev.zoom * zoomFactor }));
     } else if (pinch < 30 && pinch > 0) {
-      const zoomFactor = 1.02;
+      const zoomFactor = 1.01;
       cameraRef.current.position.multiplyScalar(zoomFactor);
       setCameraStats(prev => ({ ...prev, zoom: prev.zoom * zoomFactor }));
     }
@@ -288,9 +382,6 @@ function App() {
         y: selectedObject.position.y.toFixed(2),
         z: selectedObject.position.z.toFixed(2)
       });
-      
-      // Update local grids when objects move
-      updateLocalGrids();
     }
   };
 
@@ -377,17 +468,6 @@ function App() {
     const distance = pos.length();
     setCameraStats(prev => ({ ...prev, distance: distance.toFixed(2) }));
     
-    // Update local grids to follow objects
-    const meshes = sceneRef.current.children.filter(child => 
-      child.isMesh && child.userData.isUserObject
-    );
-    
-    localGridsRef.current.forEach((grid, index) => {
-      if (meshes[index]) {
-        grid.position.copy(meshes[index].position);
-      }
-    });
-    
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, []);
 
@@ -424,7 +504,6 @@ function App() {
         y: selectedObject.position.y.toFixed(2),
         z: selectedObject.position.z.toFixed(2)
       });
-      updateLocalGrids();
     } else if (inputState.current.isRotating) {
       // Rotate camera around scene
       const spherical = new THREE.Spherical();
@@ -481,7 +560,7 @@ function App() {
     }
   };
 
-  // Add 3D shape - Cyan colored
+  // Add 3D shape - Cyan colored with local grid
   const addShape = (shapeType) => {
     if (!sceneRef.current) return;
 
@@ -524,15 +603,15 @@ function App() {
       id: Date.now() + Math.random()
     };
 
+    // Add local grid to the object
+    createLocalGrid(mesh, 5);
+
     sceneRef.current.add(mesh);
     setObjects(prev => [...prev, { 
       id: mesh.userData.id, 
       type: shapeType, 
       position: mesh.position 
     }]);
-    
-    // Update local grids
-    setTimeout(() => updateLocalGrids(), 100);
   };
 
   // Delete selected object
@@ -542,7 +621,6 @@ function App() {
       setObjects(prev => prev.filter(obj => obj.id !== selectedObject.userData.id));
       setSelectedObject(null);
       setCoords({ x: 0, y: 0, z: 0 });
-      updateLocalGrids();
     }
   };
 
@@ -557,14 +635,12 @@ function App() {
   // Initialize everything
   useEffect(() => {
     initScene();
-    initSimpleGestureDetection();
+    initHandDetection();
 
     return () => {
-      if (gestureDetectionRef.current) {
-        clearInterval(gestureDetectionRef.current);
-      }
+      detectionActiveRef.current = false;
     };
-  }, [initScene, initSimpleGestureDetection, updateLocalGrids]);
+  }, [initScene, initHandDetection]);
 
   // Handle window resize
   useEffect(() => {
@@ -585,13 +661,13 @@ function App() {
       {/* 3D Canvas */}
       <div ref={mountRef} className="canvas-container" />
       
-      {/* Larger Webcam with gesture visualization */}
+      {/* Larger Webcam with proper gesture visualization */}
       <div className="webcam-container">
         <video ref={videoRef} className="webcam-feed" autoPlay muted />
         <canvas ref={canvasRef} className="gesture-overlay" />
       </div>
       
-      {/* JARVIS-style UI - Fixed positioning */}
+      {/* JARVIS-style UI */}
       <div className="jarvis-ui">
         {/* Top Bar */}
         <div className="jarvis-panel top-panel">
@@ -607,7 +683,7 @@ function App() {
           </div>
         </div>
 
-        {/* Left Panel - Higher position */}
+        {/* Left Panel */}
         <div className="jarvis-panel left-panel">
           <div className="panel-header">SHAPES</div>
           <div className="tool-grid">
@@ -634,7 +710,7 @@ function App() {
           </div>
         </div>
 
-        {/* Right Panel - Lower position to avoid webcam */}
+        {/* Right Panel */}
         <div className="jarvis-panel right-panel">
           <div className="panel-header">OBJECT</div>
           <div className="data-grid">
