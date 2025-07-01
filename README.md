@@ -36,6 +36,4 @@ To make 3D modeling feel **natural and immersive** by using only your hands — 
 
 ## Preview
 
-![image](https://github.com/user-attachments/assets/88c068ba-28a6-4ebd-af7f-75fabcf588c2)
-
-
+![460967295-88c068ba-28a6-4ebd-af7f-75fabcf588c2](https://github.com/user-attachments/assets/cf95044e-3771-48ad-8eec-64ad4bdf75ef)
