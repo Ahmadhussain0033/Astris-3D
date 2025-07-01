@@ -33,3 +33,9 @@ To make 3D modeling feel **natural and immersive** by using only your hands — 
 - Support for **multiple object types**
 - Voice commands for hybrid interaction
 - Export models to common 3D file formats (like `.obj` or `.glb`)
+
+## Preview
+
+![image](https://github.com/user-attachments/assets/88c068ba-28a6-4ebd-af7f-75fabcf588c2)
+
+
